@@ -11,8 +11,96 @@ import { useInvoiceStore } from "@/lib/store/invoiceStore";
 export default function InvoiceEditor() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<"preview" | "edit">("edit");
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedInvoice, setSavedInvoice] = useState<{
+    publicId: string;
+    total: number;
+    currency: string;
+  } | null>(null);
   const isPaid = useInvoiceStore((state) => state.invoice.isPaid);
   const documentType = useInvoiceStore((state) => state.invoice.documentType);
+  const setIsPaid = useInvoiceStore((state) => state.setIsPaid);
+
+  /**
+   * Save the current invoice to the database and open the payment modal.
+   * If already saved, reuse the existing publicId.
+   */
+  const handleOpenPayment = async () => {
+    if (savedInvoice) {
+      setIsModalOpen(true);
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const invoice = useInvoiceStore.getState().invoice;
+
+      const body = {
+        documentTitle: invoice.documentTitle,
+        documentType: invoice.documentType,
+        invoiceNumber: invoice.invoiceNumber,
+        issueDate: invoice.issueDate,
+        dueDate: invoice.dueDate,
+        paymentTerms: invoice.paymentTerms,
+        fromName: invoice.from.name,
+        fromEmail: invoice.from.email,
+        fromPhone: invoice.from.phone,
+        fromMobile: invoice.from.mobile,
+        fromFax: invoice.from.fax,
+        fromAddress: invoice.from.address,
+        fromCity: invoice.from.city,
+        fromZipCode: invoice.from.zipCode,
+        fromBusinessNumber: invoice.from.businessNumber,
+        toName: invoice.to.name,
+        toEmail: invoice.to.email,
+        toPhone: invoice.to.phone,
+        toMobile: invoice.to.mobile,
+        toFax: invoice.to.fax,
+        toAddress: invoice.to.address,
+        toCity: invoice.to.city,
+        toZipCode: invoice.to.zipCode,
+        toBusinessNumber: invoice.to.businessNumber,
+        currency: invoice.currency.code,
+        taxRate: invoice.taxRate,
+        discountType: invoice.discountType,
+        discountValue: invoice.discountValue,
+        accentColor: invoice.accentColor,
+        logoDataUrl: invoice.logoDataUrl,
+        signatureDataUrl: invoice.signatureDataUrl,
+        notes: invoice.notes,
+        items: invoice.items.map((item) => ({
+          description: item.description,
+          additionalDetails: item.additionalDetails,
+          quantity: item.quantity,
+          rate: item.rate,
+        })),
+      };
+
+      const res = await fetch("/api/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        alert(data.error || "Failed to save invoice");
+        return;
+      }
+
+      const created = await res.json();
+      setSavedInvoice({
+        publicId: created.publicId,
+        total: created.total,
+        currency: created.currency,
+      });
+      setIsModalOpen(true);
+    } catch {
+      alert("Failed to save invoice. Please check your connection.");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const handleGetLink = () => {
     // TODO: Generate shareable link
@@ -85,11 +173,18 @@ export default function InvoiceEditor() {
             {/* Download PDF */}
             <button
               type="button"
-              className="rounded-full bg-lagoon px-4 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 hover:shadow-md active:translate-y-0"
-              onClick={() => setIsModalOpen(true)}
+              className="rounded-full bg-lagoon px-4 sm:px-5 py-2 text-xs sm:text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 disabled:opacity-50"
+              onClick={handleOpenPayment}
+              disabled={isSaving}
             >
-              <span className="hidden sm:inline">Download PDF</span>
-              <span className="sm:hidden">PDF</span>
+              {isSaving ? (
+                <span>Saving…</span>
+              ) : (
+                <>
+                  <span className="hidden sm:inline">Download PDF</span>
+                  <span className="sm:hidden">PDF</span>
+                </>
+              )}
             </button>
             
             {/* Auth navigation */}
@@ -144,16 +239,23 @@ export default function InvoiceEditor() {
           <button
             type="button"
             className="flex-1 rounded-full bg-lagoon px-4 py-3 text-sm font-semibold text-white shadow-lg"
-            onClick={() => setIsModalOpen(true)}
+            onClick={handleOpenPayment}
+            disabled={isSaving}
           >
-            Get PDF
+            {isSaving ? "Saving…" : "Get PDF"}
           </button>
         </div>
       </div>
 
       <div className="print-hide">
-        {isModalOpen ? (
-          <PaymentModal onClose={() => setIsModalOpen(false)} />
+        {isModalOpen && savedInvoice ? (
+          <PaymentModal
+            publicId={savedInvoice.publicId}
+            amount={savedInvoice.total}
+            currency={savedInvoice.currency}
+            onClose={() => setIsModalOpen(false)}
+            onPaid={() => setIsPaid(true)}
+          />
         ) : null}
       </div>
     </div>
