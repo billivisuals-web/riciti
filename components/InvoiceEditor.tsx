@@ -136,9 +136,14 @@ export default function InvoiceEditor() {
               <span className="rounded-full bg-lagoon/10 px-3 py-1 font-medium text-lagoon text-xs sm:text-sm">
                 {documentType.charAt(0).toUpperCase() + documentType.slice(1)}
               </span>
-              <div className="badge bg-ember/15 text-ember text-xs">
-                {isPaid ? "Paid" : "Preview"}
-              </div>
+              <button
+                type="button"
+                className="badge bg-ember/15 text-ember text-xs cursor-pointer hover:bg-ember/25 transition-colors"
+                onClick={() => setActiveTab(activeTab === "preview" ? "edit" : "preview")}
+                title={activeTab === "preview" ? "Switch to Edit" : "Switch to Preview"}
+              >
+                {isPaid ? "Paid" : activeTab === "preview" ? "Editing" : "Preview"}
+              </button>
             </nav>
           </div>
           

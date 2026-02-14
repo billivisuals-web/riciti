@@ -18,33 +18,59 @@ export default function InvoiceForm() {
   const handleLogoUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    // Validate file size (max 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Logo file is too large. Please use an image under 5MB.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       setLogo(typeof reader.result === "string" ? reader.result : null);
     };
+    reader.onerror = () => {
+      alert("Failed to read the image file. Please try again.");
+    };
     reader.readAsDataURL(file);
+    // Reset the input so the same file can be selected again
+    event.target.value = "";
   };
 
   const handleSignatureUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Signature file is too large. Please use an image under 5MB.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       setSignature(typeof reader.result === "string" ? reader.result : null);
     };
+    reader.onerror = () => {
+      alert("Failed to read the image file. Please try again.");
+    };
     reader.readAsDataURL(file);
+    event.target.value = "";
   };
 
   const handlePhotoUpload = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Photo is too large. Please use an image under 10MB.");
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === "string") {
         addPhoto(reader.result);
       }
     };
+    reader.onerror = () => {
+      alert("Failed to read the image file. Please try again.");
+    };
     reader.readAsDataURL(file);
+    event.target.value = "";
   };
 
   return (
@@ -59,23 +85,34 @@ export default function InvoiceForm() {
             placeholder="Invoice"
           />
         </div>
-        <label className="order-1 sm:order-2 group relative flex h-16 sm:h-20 w-24 sm:w-28 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition hover:border-lagoon hover:bg-lagoon/5 self-center sm:self-auto">
-          {invoice.logoDataUrl ? (
-            <img
-              src={invoice.logoDataUrl}
-              alt="Logo"
-              className="h-full w-full rounded-xl object-contain p-2"
-            />
-          ) : (
-            <div className="text-center text-xs text-slate-400">
-              <svg className="mx-auto h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              <span className="mt-1 block">+ Logo</span>
-            </div>
+        <div className="order-1 sm:order-2 flex flex-col items-center sm:items-end gap-1 self-center sm:self-auto">
+          <label className="group relative flex h-16 sm:h-20 w-24 sm:w-28 cursor-pointer items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 transition hover:border-lagoon hover:bg-lagoon/5">
+            {invoice.logoDataUrl ? (
+              <img
+                src={invoice.logoDataUrl}
+                alt="Logo"
+                className="h-full w-full rounded-xl object-contain p-2"
+              />
+            ) : (
+              <div className="text-center text-xs text-slate-400">
+                <svg className="mx-auto h-5 w-5 sm:h-6 sm:w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span className="mt-1 block">+ Logo</span>
+              </div>
+            )}
+            <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
+          </label>
+          {invoice.logoDataUrl && (
+            <button
+              type="button"
+              className="text-xs text-ember hover:underline"
+              onClick={() => setLogo(null)}
+            >
+              Remove logo
+            </button>
           )}
-          <input type="file" accept="image/*" className="hidden" onChange={handleLogoUpload} />
-        </label>
+        </div>
       </div>
 
       {/* From / Bill To */}

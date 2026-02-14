@@ -106,8 +106,9 @@ export default function OptionsSidebar({ onGetLink, onPrint }: OptionsSidebarPro
             className="w-full rounded-xl border border-slate-200 px-3 py-2.5 sm:py-2 text-sm"
             placeholder={invoice.discountType === "percentage" ? "%" : "0"}
             min={0}
+            step="0.01"
             value={invoice.discountValue || ""}
-            onChange={(event) => setField("discountValue", event.target.value === "" ? 0 : Number(event.target.value) || 0)}
+            onChange={(event) => setField("discountValue", event.target.value === "" ? 0 : Math.max(0, Number(event.target.value) || 0))}
           />
         </div>
       </div>
@@ -124,8 +125,9 @@ export default function OptionsSidebar({ onGetLink, onPrint }: OptionsSidebarPro
             placeholder="16"
             min={0}
             max={100}
+            step="0.5"
             value={invoice.taxRate || ""}
-            onChange={(event) => setField("taxRate", event.target.value === "" ? 0 : Number(event.target.value) || 0)}
+            onChange={(event) => setField("taxRate", event.target.value === "" ? 0 : Math.min(100, Math.max(0, Number(event.target.value) || 0)))}
           />
           <span className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">
             %

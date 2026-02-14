@@ -1,17 +1,28 @@
 import { Currency } from "@/lib/store/invoiceStore";
 
 export const formatCurrency = (amount: number, currency: Currency) => {
-  return new Intl.NumberFormat("en-KE", {
-    style: "currency",
-    currency: currency.code,
-    maximumFractionDigits: 0
-  }).format(amount);
+  try {
+    return new Intl.NumberFormat("en-KE", {
+      style: "currency",
+      currency: currency.code,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch {
+    // Fallback if Intl fails for any reason
+    return `${currency.symbol} ${amount.toFixed(2)}`;
+  }
 };
 
 export const formatCurrencyKES = (amount: number) => {
-  return new Intl.NumberFormat("en-KE", {
-    style: "currency",
-    currency: "KES",
-    maximumFractionDigits: 0
-  }).format(amount);
+  try {
+    return new Intl.NumberFormat("en-KE", {
+      style: "currency",
+      currency: "KES",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(amount);
+  } catch {
+    return `KSh ${amount.toFixed(2)}`;
+  }
 };

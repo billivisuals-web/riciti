@@ -110,7 +110,8 @@ type InvoiceStore = {
   setIsPaid: (paid: boolean) => void;
 };
 
-const createId = () => Math.random().toString(36).slice(2, 10);
+let idCounter = 0;
+const createId = () => `item-${Date.now()}-${++idCounter}`;
 
 const today = new Date();
 const formatDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -155,7 +156,7 @@ const defaultInvoice: InvoiceData = {
   photoDataUrls: [],
   items: [
     {
-      id: createId(),
+      id: "default-item-1",
       description: "",
       additionalDetails: "",
       quantity: 1,
@@ -233,7 +234,9 @@ export const useInvoiceStore = create<InvoiceStore>((set, get) => ({
           item.id === id
             ? {
                 ...item,
-                [field]: field === "quantity" || field === "rate" ? (Number(value) || 0) : value
+                [field]: field === "quantity" || field === "rate"
+                  ? Math.max(0, Number(value) || 0)
+                  : value
               }
             : item
         )

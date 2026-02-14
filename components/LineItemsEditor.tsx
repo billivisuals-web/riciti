@@ -77,6 +77,7 @@ export default function LineItemsEditor() {
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-right text-sm"
                 placeholder="0.00"
                 min={0}
+                step="0.01"
                 value={item.rate || ""}
                 onChange={(event) => updateItem(item.id, "rate", event.target.value)}
               />
@@ -84,8 +85,9 @@ export default function LineItemsEditor() {
                 type="number"
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-center text-sm"
                 placeholder="1"
-                min={1}
-                value={item.quantity}
+                min={0}
+                step="1"
+                value={item.quantity || ""}
                 onChange={(event) => updateItem(item.id, "quantity", event.target.value)}
               />
               <div className="text-right text-sm font-semibold text-ink">
@@ -125,6 +127,7 @@ export default function LineItemsEditor() {
                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
                     placeholder="0.00"
                     min={0}
+                    step="0.01"
                     value={item.rate || ""}
                     onChange={(event) => updateItem(item.id, "rate", event.target.value)}
                   />
@@ -135,8 +138,9 @@ export default function LineItemsEditor() {
                     type="number"
                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-center"
                     placeholder="1"
-                    min={1}
-                    value={item.quantity}
+                    min={0}
+                    step="1"
+                    value={item.quantity || ""}
                     onChange={(event) => updateItem(item.id, "quantity", event.target.value)}
                   />
                 </div>
@@ -177,11 +181,16 @@ export default function LineItemsEditor() {
       {/* Add item button */}
       <button
         type="button"
-        className="flex h-11 w-11 sm:h-10 sm:w-10 items-center justify-center rounded-full bg-lagoon text-lg font-bold text-white shadow transition hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:shadow"
-        onClick={addItem}
+        className="flex items-center gap-2 rounded-full bg-lagoon px-4 py-2.5 sm:px-5 sm:py-2 text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:shadow"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          addItem();
+        }}
         title="Add line item"
       >
-        +
+        <span className="text-lg leading-none">+</span>
+        <span>Add Item</span>
       </button>
 
       {/* Totals */}

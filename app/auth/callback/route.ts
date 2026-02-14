@@ -4,10 +4,15 @@ import { cookies } from "next/headers";
 import { findUserByExternalId, createUser, migrateGuestInvoicesToUser } from "@/lib/db/supabase-db";
 
 export async function GET(request: Request) {
+<<<<<<< HEAD
   const { searchParams } = new URL(request.url);
   const baseUrl =
     process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ||
     new URL(request.url).origin;
+=======
+  const url = new URL(request.url);
+  const searchParams = url.searchParams;
+>>>>>>> 179497d (everything. am accessing my repo via github and can only see it has the readme file)
   const code = searchParams.get("code");
   const rawNext = searchParams.get("next") ?? "/dashboard";
 
@@ -16,6 +21,14 @@ export async function GET(request: Request) {
   const next = (rawNext.startsWith("/") && !rawNext.startsWith("//") && !rawNext.includes("://"))
     ? rawNext
     : "/dashboard";
+
+  // Derive origin from forwarded headers to avoid internal port leaking
+  // (e.g. Codespaces proxy forwards :443 → :3000, but request.url keeps :3000)
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") ?? "https";
+  const origin = forwardedHost
+    ? `${forwardedProto}://${forwardedHost}`
+    : url.origin;
 
   if (code) {
     const supabase = await createClient();

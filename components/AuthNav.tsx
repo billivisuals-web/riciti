@@ -23,6 +23,7 @@ export function AuthNav() {
   useEffect(() => {
     let subscription: { unsubscribe: () => void } | undefined;
 
+<<<<<<< HEAD
     try {
       const supabase = createClient();
 
@@ -41,15 +42,32 @@ export function AuthNav() {
       // Supabase not configured – show unauthenticated UI
       setLoading(false);
     }
+=======
+    supabase.auth.getUser()
+      .then(({ data: { user } }: { data: { user: SupabaseUser | null } }) => {
+        setUser(user);
+        setLoading(false);
+      })
+      .catch(() => {
+        // Supabase not reachable or misconfigured — show logged-out state
+        setUser(null);
+        setLoading(false);
+      });
+>>>>>>> 179497d (everything. am accessing my repo via github and can only see it has the readme file)
 
     return () => subscription?.unsubscribe();
   }, []);
 
   const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    setUser(null);
-    router.refresh();
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      setUser(null);
+      router.refresh();
+    } catch {
+      // Still clear local state even if signout request fails
+      setUser(null);
+    }
   };
 
   if (loading) {
