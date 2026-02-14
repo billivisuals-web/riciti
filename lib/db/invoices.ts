@@ -13,6 +13,7 @@ export {
   deleteInvoice,
   markInvoiceAsPaid,
   getInvoicePaymentStatus,
+  getDashboardStats,
   type CreateInvoiceInput,
   type UpdateInvoiceInput,
   type TenantContext,

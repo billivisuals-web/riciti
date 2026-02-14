@@ -7,7 +7,29 @@ import {
   getPaymentByCheckoutRequestId,
   updatePaymentByCheckoutRequestId,
   markInvoicePaidByAdmin,
+  getInvoiceByPublicIdAdmin,
 } from "@/lib/db/payments";
+import { getClientIP } from "@/lib/rate-limit";
+
+/**
+ * Safaricom M-Pesa production IPs (for callback verification).
+ * In sandbox mode, allow all IPs.
+ */
+const SAFARICOM_IPS = new Set([
+  "196.201.214.200",
+  "196.201.214.206",
+  "196.201.213.114",
+  "196.201.214.207",
+  "196.201.214.208",
+]);
+
+const IS_PRODUCTION = process.env.MPESA_ENVIRONMENT === "production";
+
+/**
+ * Secret token appended to the callback URL path.
+ * Prevents forged callbacks even if IP whitelist is bypassed.
+ */
+const CALLBACK_SECRET = process.env.MPESA_CALLBACK_SECRET || "";
 
 /**
  * POST /api/payments/callback
@@ -21,11 +43,31 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
+    // Callback secret token check (defense-in-depth alongside IP whitelist)
+    if (CALLBACK_SECRET) {
+      const url = new URL(request.url);
+      const token = url.searchParams.get("token");
+      if (token !== CALLBACK_SECRET) {
+        console.warn(`[M-Pesa Callback] Rejected: invalid callback token`);
+        return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
+      }
+    }
+
+    // IP whitelist check in production
+    if (IS_PRODUCTION) {
+      const ip = getClientIP(request);
+      if (!SAFARICOM_IPS.has(ip)) {
+        console.warn(`[M-Pesa Callback] Rejected request from non-Safaricom IP: ${ip}`);
+        return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
+      }
+    }
+
     const body = (await request.json()) as STKCallbackData;
 
+    // Log only non-sensitive metadata (no phone numbers or full payload)
+    const stkCb = body?.Body?.stkCallback;
     console.log(
-      "[M-Pesa Callback] Received:",
-      JSON.stringify(body, null, 2)
+      `[M-Pesa Callback] CheckoutRequestID=${stkCb?.CheckoutRequestID}, ResultCode=${stkCb?.ResultCode}`
     );
 
     // Parse the callback data
@@ -44,11 +86,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
     }
 
+    // Idempotency check — don't re-process already completed payments
+    if (payment.status === "COMPLETED" || payment.status === "FAILED" || payment.status === "CANCELLED") {
+      console.log(
+        `[M-Pesa Callback] Payment ${payment.id} already in terminal state: ${payment.status}. Skipping.`
+      );
+      return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
+    }
+
     if (result.resultCode === 0) {
       // ---- PAYMENT SUCCESSFUL ----
       console.log(
         `[M-Pesa Callback] Payment successful. Receipt: ${result.mpesaReceiptNumber}`
       );
+
+      // Verify paid amount matches the payment record amount
+      if (result.amount !== undefined && result.amount !== null) {
+        const expectedAmount = Number(payment.amount);
+        const paidAmount = Number(result.amount);
+        if (Math.abs(paidAmount - expectedAmount) > 0.01) {
+          console.error(
+            `[M-Pesa Callback] Amount mismatch! Expected ${expectedAmount}, got ${paidAmount}. ` +
+            `CheckoutRequestID: ${result.checkoutRequestId}`
+          );
+          // Still record the payment but flag it — do NOT mark invoice as paid
+          await updatePaymentByCheckoutRequestId(result.checkoutRequestId, {
+            status: "FAILED",
+            mpesaReceiptNumber: result.mpesaReceiptNumber,
+            resultCode: String(result.resultCode),
+            resultDesc: `Amount mismatch: expected ${expectedAmount}, received ${paidAmount}`,
+          });
+          return NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
+        }
+      }
 
       // Parse the transaction date from Daraja format (YYYYMMDDHHmmss)
       let transactionDate: string | undefined;

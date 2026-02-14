@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useInvoiceStore } from "@/lib/store/invoiceStore";
 import { formatCurrency } from "@/lib/utils/format";
+import { calculateInvoiceTotals } from "@/lib/utils/totals";
 
 export default function LineItemsEditor() {
   const invoice = useInvoiceStore((state) => state.invoice);
@@ -27,14 +28,15 @@ export default function LineItemsEditor() {
   };
 
   const subtotal = items.reduce((sum, item) => sum + (item.quantity || 0) * (item.rate || 0), 0);
-  const taxRate = Number(invoice.taxRate) || 0;
-  const discountValue = Number(invoice.discountValue) || 0;
-  const tax = (subtotal * taxRate) / 100;
-  const discount =
-    invoice.discountType === "percentage"
-      ? (subtotal * discountValue) / 100
-      : discountValue;
-  const total = subtotal + tax - discount;
+  const _totals = calculateInvoiceTotals({
+    items,
+    taxRate: Number(invoice.taxRate) || 0,
+    discountType: invoice.discountType,
+    discountValue: Number(invoice.discountValue) || 0,
+  });
+  const tax = _totals.taxAmount;
+  const discount = _totals.discountAmount;
+  const total = _totals.total;
 
   return (
     <div className="space-y-4">
@@ -189,7 +191,7 @@ export default function LineItemsEditor() {
             <span>Subtotal</span>
             <span>{formatCurrency(subtotal, currency)}</span>
           </div>
-          {taxRate > 0 && (
+          {invoice.taxRate > 0 && (
             <div className="flex justify-between text-slate-500">
               <span>Tax ({invoice.taxRate}%)</span>
               <span>{formatCurrency(tax, currency)}</span>

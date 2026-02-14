@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.gitignore
+*.md
+supabase/
+.env
+.env.local
+.env*.local
+.vscode/

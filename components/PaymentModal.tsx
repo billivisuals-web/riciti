@@ -33,7 +33,14 @@ export default function PaymentModal({
   const [checkoutRequestId, setCheckoutRequestId] = useState<string | null>(null);
   const pollCountRef = useRef(0);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const maxPolls = 20; // ~60 seconds (3s interval)
+  const maxPolls = 12; // Fewer polls with exponential backoff (~90s total)
+
+  // Exponential backoff intervals: 5s, 5s, 8s, 8s, 10s, 10s, 13s, 13s, ...
+  const getPollInterval = (count: number): number => {
+    const base = 5000;
+    const step = Math.floor(count / 2);
+    return Math.min(base + step * 3000, 20000); // Max 20s between polls
+  };
 
   // Cleanup polling on unmount
   useEffect(() => {
@@ -81,8 +88,8 @@ export default function PaymentModal({
       // Network error — keep polling
     }
 
-    // Schedule next poll
-    pollTimerRef.current = setTimeout(pollStatus, 3000);
+    // Schedule next poll with exponential backoff
+    pollTimerRef.current = setTimeout(pollStatus, getPollInterval(pollCountRef.current));
   }, [publicId, onPaid]);
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {

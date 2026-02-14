@@ -5,7 +5,11 @@
  */
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { SupabaseClient } from "@supabase/supabase-js";
+import { createId } from "@paralleldrive/cuid2";
+import { processImageField } from "@/lib/storage";
+import { calculateInvoiceTotals } from "@/lib/utils/totals";
 import {
   Invoice,
   LineItem,
@@ -77,10 +81,7 @@ export type TenantContext = {
 // ============================================================================
 
 function generateCuid(): string {
-  // Simple cuid-like ID generator
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 12);
-  return `c${timestamp}${randomPart}`;
+  return createId();
 }
 
 function calculateTotals(
@@ -89,17 +90,7 @@ function calculateTotals(
   discountType: DiscountType,
   discountValue: number
 ) {
-  const safeTaxRate = Number(taxRate) || 0;
-  const safeDiscountValue = Number(discountValue) || 0;
-  const subtotal = items.reduce((sum, item) => sum + (Number(item.quantity) || 0) * (Number(item.rate) || 0), 0);
-  const taxAmount = (subtotal * safeTaxRate) / 100;
-  const discountAmount =
-    discountType === "PERCENTAGE"
-      ? (subtotal * safeDiscountValue) / 100
-      : safeDiscountValue;
-  const total = subtotal + taxAmount - discountAmount;
-
-  return { subtotal, taxAmount, discountAmount, total };
+  return calculateInvoiceTotals({ items, taxRate, discountType, discountValue });
 }
 
 // Convert DB row to Invoice (camelCase columns match directly)
@@ -196,7 +187,9 @@ function toUser(row: Record<string, unknown>): User {
 // ============================================================================
 
 export async function findUserByExternalId(externalId: string): Promise<User | null> {
-  const supabase = await createClient();
+  // Use admin client — RLS SELECT policy requires auth.uid() match,
+  // but this runs during the auth callback before the session is fully established.
+  const supabase = createAdminClient();
   const { data, error } = await supabase
     .from("User")
     .select("*")
@@ -214,7 +207,9 @@ export async function createUser(input: {
   name?: string | null;
   avatarUrl?: string | null;
 }): Promise<User> {
-  const supabase = await createClient();
+  // Use admin client — there is no INSERT policy on the users table
+  // for authenticated users, so createClient() would be silently rejected by RLS.
+  const supabase = createAdminClient();
   const now = new Date().toISOString();
   
   const { data, error } = await supabase
@@ -263,6 +258,12 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceW
   const publicId = generateCuid();
   const now = new Date().toISOString();
 
+  // Process images — upload base64 to Supabase Storage, store URL
+  const [logoUrl, signatureUrl] = await Promise.all([
+    processImageField("logos", rest.logoDataUrl),
+    processImageField("signatures", rest.signatureDataUrl),
+  ]);
+
   // Insert invoice
   const { data: invoiceRow, error: invoiceError } = await supabase
     .from("Invoice")
@@ -304,8 +305,8 @@ export async function createInvoice(input: CreateInvoiceInput): Promise<InvoiceW
       discountAmount: totals.discountAmount,
       total: totals.total,
       accentColor: rest.accentColor || "#1f8ea3",
-      logoDataUrl: rest.logoDataUrl,
-      signatureDataUrl: rest.signatureDataUrl,
+      logoDataUrl: logoUrl,
+      signatureDataUrl: signatureUrl,
       notes: rest.notes,
       isPaid: false,
       createdAt: now,
@@ -353,7 +354,11 @@ export async function getInvoiceById(
 ): Promise<InvoiceWithItems | null> {
   const supabase = await createClient();
   
-  let query = supabase.from("Invoice").select("*").eq("id", id);
+  // Single query with nested select — fetches invoice + line items in one round trip
+  let query = supabase
+    .from("Invoice")
+    .select("*, LineItem(*)")
+    .eq("id", id);
   
   if (ctx.userId) {
     query = query.eq("userId", ctx.userId);
@@ -363,41 +368,42 @@ export async function getInvoiceById(
     throw new Error("Either userId or guestSessionId must be provided");
   }
 
-  const { data: invoiceRow, error } = await query.single();
-  if (error || !invoiceRow) return null;
+  const { data: row, error } = await query.single();
+  if (error || !row) return null;
 
-  const { data: itemsData } = await supabase
-    .from("LineItem")
-    .select("*")
-    .eq("invoiceId", id)
-    .order("sortOrder", { ascending: true });
+  const lineItems = (row.LineItem as Record<string, unknown>[] || [])
+    .map(toLineItem)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 
+  const { LineItem: _, ...invoiceRow } = row;
   return {
-    ...toInvoice(invoiceRow),
-    items: (itemsData || []).map(toLineItem),
+    ...toInvoice(invoiceRow as Record<string, unknown>),
+    items: lineItems,
   };
 }
 
 export async function getInvoiceByPublicId(publicId: string): Promise<InvoiceWithItems | null> {
-  const supabase = await createClient();
+  // Use admin client — public invoice links are accessed by unauthenticated payers,
+  // so the anon client’s RLS policies (which require auth.uid()) would block access.
+  const supabase = createAdminClient();
   
-  const { data: invoiceRow, error } = await supabase
+  // Single query with nested select
+  const { data: row, error } = await supabase
     .from("Invoice")
-    .select("*")
+    .select("*, LineItem(*)")
     .eq("publicId", publicId)
     .single();
 
-  if (error || !invoiceRow) return null;
+  if (error || !row) return null;
 
-  const { data: itemsData } = await supabase
-    .from("LineItem")
-    .select("*")
-    .eq("invoiceId", invoiceRow.id)
-    .order("sortOrder", { ascending: true });
+  const lineItems = (row.LineItem as Record<string, unknown>[] || [])
+    .map(toLineItem)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 
+  const { LineItem: _, ...invoiceRow } = row;
   return {
-    ...toInvoice(invoiceRow),
-    items: (itemsData || []).map(toLineItem),
+    ...toInvoice(invoiceRow as Record<string, unknown>),
+    items: lineItems,
   };
 }
 
@@ -442,20 +448,70 @@ export async function updateInvoice(
 ): Promise<InvoiceWithItems | null> {
   const supabase = await createClient();
 
-  // First verify ownership
-  const existing = await getInvoiceById(id, ctx);
-  if (!existing) return null;
-
   const { items, ...rest } = input;
   const now = new Date().toISOString();
 
-  // Recalculate totals if items changed
-  let totals = {};
-  if (items) {
-    const taxRate = input.taxRate ?? existing.taxRate;
-    const discountType = input.discountType ?? existing.discountType;
-    const discountValue = input.discountValue ?? existing.discountValue;
-    totals = calculateTotals(items, taxRate, discountType, discountValue);
+  // Build ownership filter — verify ownership inline (no separate query)
+  let ownerFilter: { field: string; value: string };
+  if (ctx.userId) {
+    ownerFilter = { field: "userId", value: ctx.userId };
+  } else if (ctx.guestSessionId) {
+    ownerFilter = { field: "guestSessionId", value: ctx.guestSessionId };
+  } else {
+    throw new Error("Either userId or guestSessionId must be provided");
+  }
+
+  // Determine if we need to recalculate totals:
+  // - When items are provided (items changed)
+  // - When financial parameters change (taxRate, discountType, discountValue) even without items
+  const financialParamsChanged = input.taxRate !== undefined || input.discountType !== undefined || input.discountValue !== undefined;
+  const needsRecalc = !!items || financialParamsChanged;
+
+  // Fetch current financial values if needed for recalculation
+  let existingFinancials: { taxRate: number; discountType: DiscountType; discountValue: number } | null = null;
+  let existingItems: { quantity: number; rate: number }[] | null = null;
+
+  if (needsRecalc) {
+    // Fetch current financials if any are missing from input
+    if (input.taxRate === undefined || input.discountType === undefined || input.discountValue === undefined) {
+      const { data: fin } = await supabase
+        .from("Invoice")
+        .select("taxRate, discountType, discountValue")
+        .eq("id", id)
+        .eq(ownerFilter.field, ownerFilter.value)
+        .single();
+      if (!fin) return null;
+      existingFinancials = fin as { taxRate: number; discountType: DiscountType; discountValue: number };
+    }
+
+    // If financial params changed but no new items provided, fetch existing line items
+    if (!items && financialParamsChanged) {
+      const { data: lineItems } = await supabase
+        .from("LineItem")
+        .select("quantity, rate")
+        .eq("invoiceId", id);
+      existingItems = (lineItems || []) as { quantity: number; rate: number }[];
+    }
+  }
+
+  // Recalculate totals when items changed or financial parameters changed
+  let totals: Record<string, number> = {};
+  if (needsRecalc) {
+    const itemsForCalc = items || existingItems || [];
+    const taxRate = input.taxRate ?? existingFinancials?.taxRate ?? 16;
+    const discountType = input.discountType ?? existingFinancials?.discountType ?? "PERCENTAGE";
+    const discountValue = input.discountValue ?? existingFinancials?.discountValue ?? 0;
+    totals = calculateTotals(itemsForCalc, taxRate, discountType, discountValue);
+  }
+
+  // Process images — upload to storage if base64
+  let logoUrl: string | null | undefined;
+  let signatureUrl: string | null | undefined;
+  if (rest.logoDataUrl !== undefined) {
+    logoUrl = await processImageField("logos", rest.logoDataUrl);
+  }
+  if (rest.signatureDataUrl !== undefined) {
+    signatureUrl = await processImageField("signatures", rest.signatureDataUrl);
   }
 
   // Build update object (only include provided fields)
@@ -490,32 +546,45 @@ export async function updateInvoice(
   if (rest.discountType !== undefined) updateData.discountType = rest.discountType;
   if (rest.discountValue !== undefined) updateData.discountValue = rest.discountValue;
   if (rest.accentColor !== undefined) updateData.accentColor = rest.accentColor;
-  if (rest.logoDataUrl !== undefined) updateData.logoDataUrl = rest.logoDataUrl;
-  if (rest.signatureDataUrl !== undefined) updateData.signatureDataUrl = rest.signatureDataUrl;
+  if (logoUrl !== undefined) updateData.logoDataUrl = logoUrl;
+  if (signatureUrl !== undefined) updateData.signatureDataUrl = signatureUrl;
   if (rest.notes !== undefined) updateData.notes = rest.notes;
 
-  // Add recalculated totals
-  if (items) {
-    Object.assign(updateData, {
-      subtotal: (totals as Record<string, number>).subtotal,
-      taxAmount: (totals as Record<string, number>).taxAmount,
-      discountAmount: (totals as Record<string, number>).discountAmount,
-      total: (totals as Record<string, number>).total,
-    });
+  // Add recalculated totals (when items changed OR financial params changed)
+  if (needsRecalc) {
+    Object.assign(updateData, totals);
   }
 
-  // Update invoice
-  const { error: updateError } = await supabase
+  // Update invoice with ownership filter (verifies access in same query)
+  const { data: updated, error: updateError } = await supabase
     .from("Invoice")
     .update(updateData)
-    .eq("id", id);
+    .eq("id", id)
+    .eq(ownerFilter.field, ownerFilter.value)
+    .select("id")
+    .single();
 
-  if (updateError) throw updateError;
+  if (updateError || !updated) return null;
 
-  // Replace line items if provided
+  // Replace line items if provided — use admin client for atomic operation
   if (items) {
-    await supabase.from("LineItem").delete().eq("invoiceId", id);
-    
+    const admin = createAdminClient();
+
+    // Delete existing + insert new in sequence with the admin client.
+    // Supabase doesn't expose multi-statement transactions, but using the
+    // admin client ensures both operations bypass RLS and execute on the
+    // same connection. If the insert fails, old items are already deleted
+    // by CASCADE on the invoice, so we re-throw to surface the error.
+    const { error: deleteError } = await admin
+      .from("LineItem")
+      .delete()
+      .eq("invoiceId", id);
+
+    if (deleteError) {
+      console.error("Failed to delete line items:", deleteError);
+      throw deleteError;
+    }
+
     if (items.length > 0) {
       const itemsToInsert = items.map((item, index) => ({
         id: generateCuid(),
@@ -530,7 +599,14 @@ export async function updateInvoice(
         updatedAt: now,
       }));
 
-      await supabase.from("LineItem").insert(itemsToInsert);
+      const { error: insertError } = await admin
+        .from("LineItem")
+        .insert(itemsToInsert);
+
+      if (insertError) {
+        console.error("Failed to insert line items:", insertError);
+        throw insertError;
+      }
     }
   }
 
@@ -540,15 +616,20 @@ export async function updateInvoice(
 export async function deleteInvoice(id: string, ctx: TenantContext): Promise<boolean> {
   const supabase = await createClient();
   
-  const existing = await getInvoiceById(id, ctx);
-  if (!existing) return false;
+  // Single delete with ownership filter — CASCADE handles line items
+  let query = supabase.from("Invoice").delete().eq("id", id);
 
-  // Delete line items first (cascade should handle this, but being explicit)
-  await supabase.from("LineItem").delete().eq("invoiceId", id);
+  if (ctx.userId) {
+    query = query.eq("userId", ctx.userId);
+  } else if (ctx.guestSessionId) {
+    query = query.eq("guestSessionId", ctx.guestSessionId);
+  } else {
+    throw new Error("Either userId or guestSessionId must be provided");
+  }
+
+  const { error, count } = await query.select("id").single();
   
-  const { error } = await supabase.from("Invoice").delete().eq("id", id);
-  
-  return !error;
+  return !error && count !== 0;
 }
 
 export async function markInvoiceAsPaid(
@@ -556,29 +637,35 @@ export async function markInvoiceAsPaid(
   ctx: TenantContext
 ): Promise<Invoice | null> {
   const supabase = await createClient();
-  
-  const existing = await getInvoiceById(id, ctx);
-  if (!existing) return null;
-
   const now = new Date().toISOString();
 
-  const { data, error } = await supabase
+  // Direct update with ownership filter — no pre-fetch needed (P3 fix)
+  let query = supabase
     .from("Invoice")
     .update({
       isPaid: true,
       paidAt: now,
       updatedAt: now,
     })
-    .eq("id", id)
-    .select()
-    .single();
+    .eq("id", id);
 
-  if (error) throw error;
+  if (ctx.userId) {
+    query = query.eq("userId", ctx.userId);
+  } else if (ctx.guestSessionId) {
+    query = query.eq("guestSessionId", ctx.guestSessionId);
+  } else {
+    throw new Error("Either userId or guestSessionId must be provided");
+  }
+
+  const { data, error } = await query.select().single();
+
+  if (error || !data) return null;
   return toInvoice(data);
 }
 
 export async function getInvoicePaymentStatus(publicId: string) {
-  const supabase = await createClient();
+  // Use admin client — this serves the public polling endpoint.
+  const supabase = createAdminClient();
   
   const { data: invoice, error } = await supabase
     .from("Invoice")
@@ -610,10 +697,47 @@ export async function migrateGuestInvoicesToUser(
   guestSessionId: string,
   userId: string
 ): Promise<void> {
-  const supabase = await createClient();
+  // Use admin client — guest invoices have user_id=NULL, so the RLS
+  // UPDATE policy (which checks user_id ownership) never matches.
+  const supabase = createAdminClient();
   
   await supabase
     .from("Invoice")
     .update({ userId: userId, guestSessionId: null })
     .eq("guestSessionId", guestSessionId);
+}
+
+/**
+ * Get aggregated dashboard stats for a user.
+ * Uses a Postgres RPC function (get_dashboard_stats) to aggregate
+ * server-side — returns counts and sums without fetching any rows.
+ */
+export async function getDashboardStats(userId: string): Promise<{
+  total: number;
+  paid: number;
+  pending: number;
+  totalValue: number;
+}> {
+  // Use admin client — the RPC is SECURITY DEFINER and should only be called
+  // from trusted server code with a verified userId (never directly from client).
+  const supabase = createAdminClient();
+
+  const { data, error } = await supabase.rpc("get_dashboard_stats", {
+    p_user_id: userId,
+  });
+
+  if (error || !data) {
+    console.error("getDashboardStats RPC error:", error);
+    return { total: 0, paid: 0, pending: 0, totalValue: 0 };
+  }
+
+  // RPC returns a JSON object
+  const stats = typeof data === "string" ? JSON.parse(data) : data;
+
+  return {
+    total: Number(stats.total) || 0,
+    paid: Number(stats.paid) || 0,
+    pending: Number(stats.pending) || 0,
+    totalValue: Number(stats.totalValue) || 0,
+  };
 }

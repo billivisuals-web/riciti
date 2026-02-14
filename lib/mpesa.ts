@@ -82,6 +82,13 @@ export type ParsedCallbackResult = {
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+/** Timeout for all Safaricom API calls (15 seconds) */
+const API_TIMEOUT_MS = 15_000;
+
+/** Retry config for access token fetch */
+const TOKEN_MAX_RETRIES = 2;
+const TOKEN_RETRY_BASE_MS = 500;
+
 export async function getAccessToken(): Promise<string> {
   // Return cached token if still valid (with 60s buffer)
   if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
@@ -90,30 +97,52 @@ export async function getAccessToken(): Promise<string> {
 
   const credentials = Buffer.from(`${CONSUMER_KEY}:${CONSUMER_SECRET}`).toString("base64");
 
-  const response = await fetch(
-    `${BASE_URL}/oauth/v1/generate?grant_type=client_credentials`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Basic ${credentials}`,
-      },
-    }
-  );
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Failed to get M-Pesa access token: ${response.status} ${text}`);
+  for (let attempt = 0; attempt <= TOKEN_MAX_RETRIES; attempt++) {
+    try {
+      if (attempt > 0) {
+        // Exponential backoff: 500ms, 1000ms
+        const delay = TOKEN_RETRY_BASE_MS * Math.pow(2, attempt - 1);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        console.log(`[M-Pesa] Retrying access token (attempt ${attempt + 1})`);
+      }
+
+      const response = await fetch(
+        `${BASE_URL}/oauth/v1/generate?grant_type=client_credentials`,
+        {
+          method: "GET",
+          headers: {
+            Authorization: `Basic ${credentials}`,
+          },
+          signal: AbortSignal.timeout(API_TIMEOUT_MS),
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`Failed to get M-Pesa access token: ${response.status} ${text}`);
+      }
+
+      const data = await response.json();
+      const expiresInMs = (parseInt(data.expires_in, 10) || 3599) * 1000;
+
+      cachedToken = {
+        token: data.access_token,
+        expiresAt: Date.now() + expiresInMs,
+      };
+
+      return cachedToken.token;
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      // Only retry on network/timeout errors, not auth failures
+      if (lastError.message.includes("401") || lastError.message.includes("403")) {
+        throw lastError;
+      }
+    }
   }
 
-  const data = await response.json();
-  const expiresInMs = (parseInt(data.expires_in, 10) || 3599) * 1000;
-
-  cachedToken = {
-    token: data.access_token,
-    expiresAt: Date.now() + expiresInMs,
-  };
-
-  return cachedToken.token;
+  throw lastError ?? new Error("Failed to get M-Pesa access token after retries");
 }
 
 // ============================================================================
@@ -206,6 +235,7 @@ export async function initiateSTKPush(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     }
   );
 
@@ -251,6 +281,7 @@ export async function querySTKPush(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(API_TIMEOUT_MS),
     }
   );
 

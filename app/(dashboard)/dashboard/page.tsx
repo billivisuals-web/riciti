@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import { findUserByExternalId, listInvoices } from "@/lib/db/supabase-db";
+import { findUserByExternalId, listInvoices, getDashboardStats } from "@/lib/db/supabase-db";
 import Link from "next/link";
 import type { Invoice } from "@/lib/db/types";
 
@@ -46,17 +46,19 @@ export default async function DashboardPage() {
   // Get user from our database
   const dbUser = await findUserByExternalId(user!.id);
 
-  // Get user's invoices
-  const { invoices } = dbUser
-    ? await listInvoices({ userId: dbUser.id }, { limit: 50 })
-    : { invoices: [] };
+  if (!dbUser) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-ink/60">Account not found. Please sign in again.</p>
+      </div>
+    );
+  }
 
-  const stats = {
-    total: invoices.length,
-    paid: invoices.filter((i: Invoice) => i.isPaid).length,
-    pending: invoices.filter((i: Invoice) => !i.isPaid).length,
-    totalValue: invoices.reduce((sum: number, i: Invoice) => sum + i.total, 0),
-  };
+  // Fetch stats via efficient aggregate query + paginated recent invoices in parallel
+  const [stats, { invoices }] = await Promise.all([
+    getDashboardStats(dbUser.id),
+    listInvoices({ userId: dbUser.id }, { limit: 20, offset: 0 }),
+  ]);
 
   return (
     <div className="space-y-6 sm:space-y-8">

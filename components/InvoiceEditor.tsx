@@ -189,9 +189,7 @@ export default function InvoiceEditor() {
             
             {/* Auth navigation */}
             <div className="hidden sm:block border-l border-slate-200 h-6 mx-1" />
-            <div className="hidden sm:block">
-              <AuthNav />
-            </div>
+            <AuthNav />
           </div>
         </div>
       </header>

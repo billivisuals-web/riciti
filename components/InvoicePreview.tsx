@@ -3,24 +3,24 @@
 import { useMemo } from "react";
 import { useInvoiceStore, PAYMENT_TERMS_LABELS } from "@/lib/store/invoiceStore";
 import { formatCurrency } from "@/lib/utils/format";
+import { calculateInvoiceTotals } from "@/lib/utils/totals";
 
 export default function InvoicePreview() {
   const invoice = useInvoiceStore((state) => state.invoice);
 
   const totals = useMemo(() => {
-    const subtotal = invoice.items.reduce(
-      (sum, item) => sum + (item.quantity || 0) * (item.rate || 0),
-      0
-    );
-    const taxRate = Number(invoice.taxRate) || 0;
-    const discountValue = Number(invoice.discountValue) || 0;
-    const tax = (subtotal * taxRate) / 100;
-    const discount =
-      invoice.discountType === "percentage"
-        ? (subtotal * discountValue) / 100
-        : discountValue;
-    const total = subtotal + tax - discount;
-    return { subtotal, tax, discount, total };
+    const result = calculateInvoiceTotals({
+      items: invoice.items,
+      taxRate: Number(invoice.taxRate) || 0,
+      discountType: invoice.discountType,
+      discountValue: Number(invoice.discountValue) || 0,
+    });
+    return {
+      subtotal: result.subtotal,
+      tax: result.taxAmount,
+      discount: result.discountAmount,
+      total: result.total,
+    };
   }, [invoice.items, invoice.taxRate, invoice.discountType, invoice.discountValue]);
 
   const fmt = (amount: number) => formatCurrency(amount, invoice.currency);

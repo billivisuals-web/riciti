@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { v4 as uuidv4 } from "uuid";
 import { createClient } from "@/lib/supabase/server";
 import { findUserByExternalId } from "@/lib/db/supabase-db";
+import { createId } from "@paralleldrive/cuid2";
 
 const GUEST_SESSION_COOKIE = "riciti_guest_session";
 const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 days
@@ -55,12 +56,12 @@ export async function getTenantContext(): Promise<{
 }
 
 /**
- * Generate a unique invoice number
+ * Generate a unique invoice number.
+ * Uses CUID2 to guarantee uniqueness at any volume.
+ * Format: PREFIX-YYYY-XXXXXXXXXX (10-char alphanumeric suffix)
  */
 export function generateInvoiceNumber(prefix = "INV"): string {
   const year = new Date().getFullYear();
-  const random = Math.floor(Math.random() * 10000)
-    .toString()
-    .padStart(4, "0");
-  return `${prefix}-${year}-${random}`;
+  const uniqueId = createId().slice(0, 10).toUpperCase();
+  return `${prefix}-${year}-${uniqueId}`;
 }

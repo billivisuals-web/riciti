@@ -6,6 +6,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createId } from "@paralleldrive/cuid2";
 import { Payment, PaymentStatus } from "./types";
 
 // ============================================================================
@@ -13,9 +14,7 @@ import { Payment, PaymentStatus } from "./types";
 // ============================================================================
 
 function generateCuid(): string {
-  const timestamp = Date.now().toString(36);
-  const randomPart = Math.random().toString(36).substring(2, 12);
-  return `c${timestamp}${randomPart}`;
+  return createId();
 }
 
 function toPayment(row: Record<string, unknown>): Payment {
@@ -55,30 +54,38 @@ export type CreatePaymentInput = {
   currency?: string;
 };
 
-export async function createPayment(
+/**
+ * Atomically create a payment only if the invoice is unpaid and no
+ * other payment is in progress. Uses a Postgres RPC with row-level
+ * locking (SELECT ... FOR UPDATE) to prevent double payments.
+ */
+export async function createPaymentAtomic(
   input: CreatePaymentInput
-): Promise<Payment> {
+): Promise<Payment | { error: string }> {
   const supabase = createAdminClient();
-  const now = new Date().toISOString();
+  const paymentId = generateCuid();
 
-  const { data, error } = await supabase
-    .from("Payment")
-    .insert({
-      id: generateCuid(),
-      invoiceId: input.invoiceId,
-      userId: input.userId || null,
-      phoneNumber: input.phoneNumber,
-      amount: input.amount,
-      currency: input.currency || "KES",
-      status: "PENDING",
-      createdAt: now,
-      updatedAt: now,
-    })
-    .select()
-    .single();
+  const { data, error } = await supabase.rpc("create_payment_if_unpaid", {
+    p_id: paymentId,
+    p_invoice_id: input.invoiceId,
+    p_user_id: input.userId || null,
+    p_phone_number: input.phoneNumber,
+    p_amount: input.amount,
+    p_currency: input.currency || "KES",
+  });
 
-  if (error) throw error;
-  return toPayment(data);
+  if (error) {
+    console.error("createPaymentAtomic RPC error:", error);
+    throw error;
+  }
+
+  const result = typeof data === "string" ? JSON.parse(data) : data;
+
+  if (result.error) {
+    return { error: result.error };
+  }
+
+  return toPayment(result);
 }
 
 // ============================================================================
@@ -151,10 +158,13 @@ export async function updatePaymentByCheckoutRequestId(
   if (input.resultDesc !== undefined) updateData.resultDesc = input.resultDesc;
   if (input.completedAt !== undefined) updateData.completedAt = input.completedAt;
 
+  // Conditional update: only update if payment is NOT in a terminal state.
+  // This prevents race conditions between callback and query handlers.
   const { data, error } = await supabase
     .from("Payment")
     .update(updateData)
     .eq("checkoutRequestId", checkoutRequestId)
+    .not("status", "in", '("COMPLETED","FAILED","CANCELLED")')
     .select()
     .single();
 

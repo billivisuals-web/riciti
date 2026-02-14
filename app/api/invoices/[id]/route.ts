@@ -6,6 +6,8 @@ import {
   deleteInvoice,
 } from "@/lib/db/invoices";
 import { DocumentType, PaymentTerms, DiscountType } from "@/lib/db/types";
+import { UpdateInvoiceSchema } from "@/lib/validators";
+import { privateCrudLimiter, getClientIP, consumeRateLimit } from "@/lib/rate-limit";
 
 type RouteParams = {
   params: Promise<{ id: string }>;
@@ -17,6 +19,12 @@ type RouteParams = {
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    const ip = getClientIP(request);
+    const rl = await consumeRateLimit(privateCrudLimiter, ip);
+    if (!rl.allowed) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
     const { id } = await params;
     const ctx = await getTenantContext();
 
@@ -29,7 +37,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    return NextResponse.json(invoice);
+    const response = NextResponse.json(invoice);
+    response.headers.set(
+      "Cache-Control",
+      "private, max-age=5, stale-while-revalidate=15"
+    );
+    return response;
   } catch (error) {
     console.error("Error fetching invoice:", error);
     return NextResponse.json(
@@ -45,49 +58,67 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  */
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    const ip = getClientIP(request);
+    const rl = await consumeRateLimit(privateCrudLimiter, ip);
+    if (!rl.allowed) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
     const { id } = await params;
     const ctx = await getTenantContext();
     const body = await request.json();
 
+    // Validate with Zod
+    const parsed = UpdateInvoiceSchema.safeParse(body);
+    if (!parsed.success) {
+      const firstIssue = parsed.error.issues[0];
+      return NextResponse.json(
+        { error: firstIssue.message, field: firstIssue.path.join(".") },
+        { status: 400 }
+      );
+    }
+
+    const data = parsed.data;
+
     // Map string enums if provided
-    const documentType = body.documentType?.toUpperCase() as DocumentType | undefined;
-    const paymentTerms = body.paymentTerms?.toUpperCase().replace(/-/g, "_") as PaymentTerms | undefined;
-    const discountType = body.discountType?.toUpperCase() as DiscountType | undefined;
+    const documentType = data.documentType?.toUpperCase() as DocumentType | undefined;
+    const paymentTerms = data.paymentTerms?.toUpperCase().replace(/-/g, "_") as PaymentTerms | undefined;
+    const discountType = data.discountType?.toUpperCase() as DiscountType | undefined;
 
     const invoice = await updateInvoice(id, ctx, {
       documentType,
       paymentTerms,
       discountType,
-      documentTitle: body.documentTitle,
-      invoiceNumber: body.invoiceNumber,
-      issueDate: body.issueDate ? new Date(body.issueDate) : undefined,
-      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-      fromName: body.fromName,
-      fromEmail: body.fromEmail,
-      fromPhone: body.fromPhone,
-      fromMobile: body.fromMobile,
-      fromFax: body.fromFax,
-      fromAddress: body.fromAddress,
-      fromCity: body.fromCity,
-      fromZipCode: body.fromZipCode,
-      fromBusinessNumber: body.fromBusinessNumber,
-      toName: body.toName,
-      toEmail: body.toEmail,
-      toPhone: body.toPhone,
-      toMobile: body.toMobile,
-      toFax: body.toFax,
-      toAddress: body.toAddress,
-      toCity: body.toCity,
-      toZipCode: body.toZipCode,
-      toBusinessNumber: body.toBusinessNumber,
-      currency: body.currency,
-      taxRate: body.taxRate,
-      discountValue: body.discountValue,
-      accentColor: body.accentColor,
-      logoDataUrl: body.logoDataUrl,
-      signatureDataUrl: body.signatureDataUrl,
-      notes: body.notes,
-      items: body.items,
+      documentTitle: data.documentTitle,
+      invoiceNumber: data.invoiceNumber,
+      issueDate: data.issueDate ? new Date(data.issueDate) : undefined,
+      dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
+      fromName: data.fromName,
+      fromEmail: data.fromEmail,
+      fromPhone: data.fromPhone,
+      fromMobile: data.fromMobile,
+      fromFax: data.fromFax,
+      fromAddress: data.fromAddress,
+      fromCity: data.fromCity,
+      fromZipCode: data.fromZipCode,
+      fromBusinessNumber: data.fromBusinessNumber,
+      toName: data.toName,
+      toEmail: data.toEmail,
+      toPhone: data.toPhone,
+      toMobile: data.toMobile,
+      toFax: data.toFax,
+      toAddress: data.toAddress,
+      toCity: data.toCity,
+      toZipCode: data.toZipCode,
+      toBusinessNumber: data.toBusinessNumber,
+      currency: data.currency,
+      taxRate: data.taxRate,
+      discountValue: data.discountValue,
+      accentColor: data.accentColor,
+      logoDataUrl: data.logoDataUrl ?? undefined,
+      signatureDataUrl: data.signatureDataUrl ?? undefined,
+      notes: data.notes,
+      items: data.items,
     });
 
     if (!invoice) {
@@ -113,6 +144,12 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
  */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    const ip = getClientIP(request);
+    const rl = await consumeRateLimit(privateCrudLimiter, ip);
+    if (!rl.allowed) {
+      return NextResponse.json({ error: "Too many requests" }, { status: 429 });
+    }
+
     const { id } = await params;
     const ctx = await getTenantContext();
 

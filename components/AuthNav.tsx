@@ -21,18 +21,28 @@ export function AuthNav() {
   const router = useRouter();
 
   useEffect(() => {
-    const supabase = createClient();
+    let subscription: { unsubscribe: () => void } | undefined;
 
-    supabase.auth.getUser().then(({ data: { user } }: { data: { user: SupabaseUser | null } }) => {
-      setUser(user);
+    try {
+      const supabase = createClient();
+
+      supabase.auth.getUser().then(({ data: { user } }: { data: { user: SupabaseUser | null } }) => {
+        setUser(user);
+        setLoading(false);
+      }).catch(() => {
+        setLoading(false);
+      });
+
+      const { data: { subscription: sub } } = supabase.auth.onAuthStateChange((_event: string, session: { user: SupabaseUser | null } | null) => {
+        setUser(session?.user ?? null);
+      });
+      subscription = sub;
+    } catch {
+      // Supabase not configured – show unauthenticated UI
       setLoading(false);
-    });
+    }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event: string, session: { user: SupabaseUser | null } | null) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => subscription?.unsubscribe();
   }, []);
 
   const handleSignOut = async () => {

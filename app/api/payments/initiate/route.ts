@@ -4,10 +4,12 @@ import {
   normalizePhoneNumber,
 } from "@/lib/mpesa";
 import {
-  createPayment,
+  createPaymentAtomic,
   updatePaymentById,
   getInvoiceByPublicIdAdmin,
 } from "@/lib/db/payments";
+import { PaymentInitiateSchema } from "@/lib/validators";
+import { paymentLimiter, getClientIP, consumeRateLimit } from "@/lib/rate-limit";
 
 /**
  * POST /api/payments/initiate
@@ -20,16 +22,31 @@ import {
  */
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { publicId, phoneNumber } = body;
-
-    // ---- Validate input ----
-    if (!publicId || !phoneNumber) {
+    // Rate limit — 5 requests/minute per IP
+    const ip = getClientIP(request);
+    const { allowed, retryAfterMs } = await consumeRateLimit(paymentLimiter, ip);
+    if (!allowed) {
       return NextResponse.json(
-        { error: "publicId and phoneNumber are required" },
+        { error: "Too many payment requests. Please wait before trying again." },
+        {
+          status: 429,
+          headers: { "Retry-After": String(Math.ceil(retryAfterMs / 1000)) },
+        }
+      );
+    }
+
+    const body = await request.json();
+
+    // Validate with Zod
+    const parsed = PaymentInitiateSchema.safeParse(body);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: parsed.error.issues[0].message },
         { status: 400 }
       );
     }
+
+    const { publicId, phoneNumber } = parsed.data;
 
     // Normalize phone number to 254XXXXXXXXX
     let normalizedPhone: string;
@@ -69,8 +86,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ---- Create payment record (PENDING) ----
-    const payment = await createPayment({
+    // ---- Atomically create payment record (prevents double payments) ----
+    const payment = await createPaymentAtomic({
       invoiceId: invoice.id,
       userId: invoice.userId,
       phoneNumber: normalizedPhone,
@@ -78,10 +95,23 @@ export async function POST(request: NextRequest) {
       currency: invoice.currency,
     });
 
+    if ('error' in payment) {
+      return NextResponse.json(
+        { error: payment.error },
+        { status: 409 }
+      );
+    }
+
     // ---- Determine callback URL ----
-    const callbackUrl =
+    const baseCallbackUrl =
       process.env.MPESA_CALLBACK_URL ||
       `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/callback`;
+    
+    // Append secret token for callback verification (defense-in-depth)
+    const callbackSecret = process.env.MPESA_CALLBACK_SECRET;
+    const callbackUrl = callbackSecret
+      ? `${baseCallbackUrl}?token=${callbackSecret}`
+      : baseCallbackUrl;
 
     // ---- Initiate STK Push ----
     const stkResponse = await initiateSTKPush({
@@ -108,9 +138,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error initiating M-Pesa payment:", error);
 
-    const message =
-      error instanceof Error ? error.message : "Failed to initiate payment";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to initiate payment" },
+      { status: 500 }
+    );
   }
 }

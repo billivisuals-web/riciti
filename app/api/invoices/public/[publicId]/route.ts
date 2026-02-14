@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getInvoiceByPublicId, getInvoicePaymentStatus } from "@/lib/db/invoices";
+import { getInvoiceByPublicId } from "@/lib/db/invoices";
+import { publicReadLimiter, getClientIP, consumeRateLimit } from "@/lib/rate-limit";
 
 type RouteParams = {
   params: Promise<{ publicId: string }>;
@@ -12,6 +13,16 @@ type RouteParams = {
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    // Rate limit
+    const ip = getClientIP(request);
+    const { allowed } = await consumeRateLimit(publicReadLimiter, ip);
+    if (!allowed) {
+      return NextResponse.json(
+        { error: "Too many requests" },
+        { status: 429 }
+      );
+    }
+
     const { publicId } = await params;
 
     const invoice = await getInvoiceByPublicId(publicId);
@@ -24,7 +35,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Return a sanitized version (remove sensitive data if needed)
-    return NextResponse.json({
+    const response = NextResponse.json({
       id: invoice.id,
       publicId: invoice.publicId,
       documentType: invoice.documentType,
@@ -60,6 +71,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       items: invoice.items,
       isPaid: invoice.isPaid,
     });
+
+    // Public invoices change rarely — cache aggressively
+    response.headers.set(
+      "Cache-Control",
+      "public, max-age=60, stale-while-revalidate=300"
+    );
+
+    return response;
   } catch (error) {
     console.error("Error fetching public invoice:", error);
     return NextResponse.json(
