@@ -1,11 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import { SERVICE_FEE_AMOUNT, SERVICE_FEE_CURRENCY } from "@/lib/pricing";
 
 type PaymentModalProps = {
   publicId: string;
-  amount: number;
-  currency?: string;
   onClose: () => void;
   onPaid?: () => void;
 };
@@ -21,8 +20,6 @@ type PaymentState =
 
 export default function PaymentModal({
   publicId,
-  amount,
-  currency = "KES",
   onClose,
   onPaid,
 }: PaymentModalProps) {
@@ -161,12 +158,33 @@ export default function PaymentModal({
     }
   };
 
-  const formatAmount = (val: number) =>
+  const formatServiceFee = () =>
     new Intl.NumberFormat("en-KE", {
       style: "currency",
-      currency,
+      currency: SERVICE_FEE_CURRENCY,
       minimumFractionDigits: 0,
-    }).format(val);
+    }).format(SERVICE_FEE_AMOUNT);
+
+  const handleDownloadPdf = async () => {
+    try {
+      const res = await fetch(`/api/invoices/public/${publicId}/pdf`);
+      if (!res.ok) {
+        setError("Failed to download PDF. Please try again.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${publicId}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      setError("Failed to download PDF. Please try again.");
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/40 p-0 sm:p-4">
@@ -182,7 +200,7 @@ export default function PaymentModal({
             </h2>
             {state === "idle" && (
               <p className="mt-2 text-sm text-slate-500">
-                Pay {formatAmount(amount)} via M-Pesa STK Push.
+                Service fee: {formatServiceFee()} via M-Pesa to download your invoice.
               </p>
             )}
           </div>
@@ -226,7 +244,7 @@ export default function PaymentModal({
             >
               {state === "submitting"
                 ? "Sending STK push…"
-                : `Pay ${formatAmount(amount)}`}
+                : `Pay ${formatServiceFee()}`}
             </button>
           </form>
         )}
@@ -262,7 +280,7 @@ export default function PaymentModal({
               </svg>
             </div>
             <p className="text-sm font-medium text-ink">
-              Payment of {formatAmount(amount)} received!
+              Payment received! Your invoice is ready.
             </p>
             {receiptNumber && (
               <p className="text-xs text-slate-500">
@@ -271,10 +289,17 @@ export default function PaymentModal({
             )}
             <button
               type="button"
-              className="w-full rounded-full bg-ink px-4 py-3.5 text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 active:translate-y-0"
+              className="w-full rounded-full bg-lagoon px-4 py-3.5 text-sm font-semibold text-white shadow transition hover:-translate-y-0.5 active:translate-y-0"
+              onClick={handleDownloadPdf}
+            >
+              Download PDF
+            </button>
+            <button
+              type="button"
+              className="w-full rounded-full border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
               onClick={onClose}
             >
-              Done
+              Close
             </button>
           </div>
         )}

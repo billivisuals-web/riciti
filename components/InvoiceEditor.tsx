@@ -14,8 +14,6 @@ export default function InvoiceEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [savedInvoice, setSavedInvoice] = useState<{
     publicId: string;
-    total: number;
-    currency: string;
   } | null>(null);
   const isPaid = useInvoiceStore((state) => state.invoice.isPaid);
   const documentType = useInvoiceStore((state) => state.invoice.documentType);
@@ -91,8 +89,6 @@ export default function InvoiceEditor() {
       const created = await res.json();
       setSavedInvoice({
         publicId: created.publicId,
-        total: created.total,
-        currency: created.currency,
       });
       setIsModalOpen(true);
     } catch {
@@ -108,6 +104,11 @@ export default function InvoiceEditor() {
   };
 
   const handlePrint = () => {
+    if (!isPaid) {
+      // Must pay service fee before printing
+      handleOpenPayment();
+      return;
+    }
     // Always switch to preview before printing so the invoice is
     // fully rendered (images loaded, layout calculated) — this is
     // more reliable across browsers than relying on hidden+print:block.
@@ -254,8 +255,6 @@ export default function InvoiceEditor() {
         {isModalOpen && savedInvoice ? (
           <PaymentModal
             publicId={savedInvoice.publicId}
-            amount={savedInvoice.total}
-            currency={savedInvoice.currency}
             onClose={() => setIsModalOpen(false)}
             onPaid={() => setIsPaid(true)}
           />

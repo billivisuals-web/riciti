@@ -10,6 +10,7 @@ import {
 } from "@/lib/db/payments";
 import { PaymentInitiateSchema } from "@/lib/validators";
 import { paymentLimiter, getClientIP, consumeRateLimit } from "@/lib/rate-limit";
+import { SERVICE_FEE_AMOUNT, SERVICE_FEE_CURRENCY } from "@/lib/pricing";
 
 /**
  * POST /api/payments/initiate
@@ -79,20 +80,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (invoice.total <= 0) {
-      return NextResponse.json(
-        { error: "Invoice total must be greater than 0" },
-        { status: 400 }
-      );
-    }
-
     // ---- Atomically create payment record (prevents double payments) ----
+    // Charge the fixed platform service fee (KSH 10), NOT the invoice total
     const payment = await createPaymentAtomic({
       invoiceId: invoice.id,
       userId: invoice.userId,
       phoneNumber: normalizedPhone,
-      amount: invoice.total,
-      currency: invoice.currency,
+      amount: SERVICE_FEE_AMOUNT,
+      currency: SERVICE_FEE_CURRENCY,
     });
 
     if ('error' in payment) {
@@ -114,11 +109,12 @@ export async function POST(request: NextRequest) {
       : baseCallbackUrl;
 
     // ---- Initiate STK Push ----
+    // STK Push charges the fixed service fee, not the invoice total
     const stkResponse = await initiateSTKPush({
       phoneNumber: normalizedPhone,
-      amount: invoice.total,
+      amount: SERVICE_FEE_AMOUNT,
       accountReference: invoice.invoiceNumber,
-      transactionDesc: "Invoice Pay",
+      transactionDesc: "Riciti Service Fee",
       callbackUrl,
     });
 
